@@ -98,6 +98,8 @@ MainWindow::MainWindow(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>
     notebook = x->get_widget<Gtk::Notebook>("notebook");
     showVolumeMetersCheckButton = x->get_widget<Gtk::CheckButton>("showVolumeMetersCheckButton");
     hideUnavailableCardProfilesCheckButton = x->get_widget<Gtk::CheckButton>("hideUnavailableCardProfilesCheckButton");
+    monoAudioLabel = x->get_widget<Gtk::Label>("monoAudioLabel");
+    monoAudioSwitch = x->get_widget<Gtk::Switch>("monoAudioSwitch");
 
     sinkInputTypeComboBox->set_active((int) showSinkInputType);
     sourceOutputTypeComboBox->set_active((int) showSourceOutputType);
@@ -110,6 +112,10 @@ MainWindow::MainWindow(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>
     sourceTypeComboBox->signal_changed().connect(sigc::mem_fun(*this, &MainWindow::onSourceTypeComboBoxChanged));
     showVolumeMetersCheckButton->signal_toggled().connect(sigc::mem_fun(*this, &MainWindow::onShowVolumeMetersCheckButtonToggled));
     hideUnavailableCardProfilesCheckButton->signal_toggled().connect(sigc::mem_fun(*this, &MainWindow::onHideUnavailableCardProfilesCheckButtonToggled));
+
+#if HAVE_PULSE_MESSAGING_API
+    monoAudioSwitch->signal_state_set().connect(sigc::mem_fun(*this, &MainWindow::onMonoAudioStateSet), false);
+#endif
 
     auto event_controller_key = Gtk::EventControllerKey::create();
     event_controller_key->signal_key_pressed().connect(sigc::mem_fun(*this, &MainWindow::on_key_press_event), false);
@@ -1474,4 +1480,16 @@ void MainWindow::onHideUnavailableCardProfilesCheckButtonToggled() {
         cw->hideUnavailableProfiles = state;
         cw->prepareMenu();
     }
+}
+
+bool MainWindow::onMonoAudioStateSet(bool state) {
+    pa_context *c = get_context();
+    pa_operation *o;
+    const char *value = state ? "true" : "false";
+
+    o = pa_context_send_message_to_object(c, "/core", "pipewire-pulse:force-mono-output", value, NULL, NULL);
+    if (o)
+        pa_operation_unref(o);
+
+    return false;
 }

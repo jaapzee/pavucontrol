@@ -406,6 +406,37 @@
                               <object class="GtkBox">
                                 <property name="orientation">vertical</property>
                                 <child>
+                                  <object class="GtkBox" id="optionsBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">12</property>
+                                    <property name="margin-top">18</property>
+                                    <property name="margin-bottom">18</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-end">12</property>
+                                    <child>
+                                      <object class="GtkBox" id="monoAudioBox">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">12</property>
+                                        <property name="tooltip-text">Requires PipeWire 1.4.10 or later</property>
+                                        <child>
+                                          <object class="GtkSwitch" id="monoAudioSwitch">
+                                            <property name="sensitive">false</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLabel" id="monoAudioLabel">
+                                            <property name="label" translatable="yes">Configure all output devices as mono</property>
+                                            <property name="sensitive">false</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkSeparator"/>
+                                </child>
+                                <child>
                                   <object class="GtkBox" id="cardsVBox">
                                     <property name="vexpand">1</property>
                                     <property name="orientation">vertical</property>
