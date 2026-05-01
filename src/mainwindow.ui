@@ -431,6 +431,24 @@
                                         </child>
                                       </object>
                                     </child>
+                                    <child>
+                                      <object class="GtkBox" id="btAutoswitchBox">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">12</property>
+                                        <property name="tooltip-text">Requires PipeWire 1.6 or later</property>
+                                        <child>
+                                          <object class="GtkSwitch" id="btAutoswitchSwitch">
+                                            <property name="sensitive">false</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLabel" id="btAutoswitchLabel">
+                                            <property name="label" translatable="yes">Automatically enable Bluetooth mic (reduces audio quality during capture)</property>
+                                            <property name="sensitive">false</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
                                 <child>

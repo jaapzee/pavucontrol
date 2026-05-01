@@ -100,6 +100,8 @@ MainWindow::MainWindow(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>
     hideUnavailableCardProfilesCheckButton = x->get_widget<Gtk::CheckButton>("hideUnavailableCardProfilesCheckButton");
     monoAudioLabel = x->get_widget<Gtk::Label>("monoAudioLabel");
     monoAudioSwitch = x->get_widget<Gtk::Switch>("monoAudioSwitch");
+    btAutoswitchLabel = x->get_widget<Gtk::Label>("btAutoswitchLabel");
+    btAutoswitchSwitch = x->get_widget<Gtk::Switch>("btAutoswitchSwitch");
 
     sinkInputTypeComboBox->set_active((int) showSinkInputType);
     sourceOutputTypeComboBox->set_active((int) showSourceOutputType);
@@ -115,6 +117,7 @@ MainWindow::MainWindow(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>
 
 #if HAVE_PULSE_MESSAGING_API
     monoAudioSwitch->signal_state_set().connect(sigc::mem_fun(*this, &MainWindow::onMonoAudioStateSet), false);
+    btAutoswitchSwitch->signal_state_set().connect(sigc::mem_fun(*this, &MainWindow::onBtAutoswitchSet), false);
 #endif
 
     auto event_controller_key = Gtk::EventControllerKey::create();
@@ -1488,6 +1491,18 @@ bool MainWindow::onMonoAudioStateSet(bool state) {
     const char *value = state ? "true" : "false";
 
     o = pa_context_send_message_to_object(c, "/core", "pipewire-pulse:force-mono-output", value, NULL, NULL);
+    if (o)
+        pa_operation_unref(o);
+
+    return false;
+}
+
+bool MainWindow::onBtAutoswitchSet(bool state) {
+    pa_context *c = get_context();
+    pa_operation *o;
+    const char *value = state ? "true" : "false";
+
+    o = pa_context_send_message_to_object(c, "/core", "pipewire-pulse:bluetooth-headset-autoswitch", value, NULL, NULL);
     if (o)
         pa_operation_unref(o);
 
