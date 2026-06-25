@@ -1,0 +1,30 @@
+# Maintainer: local build, not affiliated with the Arch Linux pavucontrol package
+#
+# Builds pavucontrol directly from the working tree one directory up
+# (the local checkout, including any uncommitted changes), instead of
+# fetching a release tarball. Run `makepkg -si` from this directory.
+pkgname=pavucontrol
+pkgver=6.2
+pkgrel=1.4
+epoch=1
+pkgdesc="PulseAudio Volume Control (local build)"
+arch=('x86_64')
+url="https://freedesktop.org/software/pulseaudio/pavucontrol/"
+license=('GPL-2.0-or-later')
+depends=('gcc-libs' 'glib2' 'glibc' 'glibmm-2.68' 'gtk4' 'gtkmm-4.0' 'json-glib' 'libcanberra' 'libpulse' 'libsigc++-3.0')
+optdepends=('wireplumber: also write adjusted volumes for inactive streams to WirePlumber state, so they take effect on PipeWire setups')
+makedepends=('meson' 'ninja' 'gettext')
+options=('!emptydirs')
+
+_projectdir="$startdir/.."
+
+build() {
+    arch-meson "$_projectdir" build \
+        -D audio-feedback=enabled \
+        -D lynx=disabled
+    meson compile -C build
+}
+
+package() {
+    meson install -C build --destdir "$pkgdir"
+}

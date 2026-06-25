@@ -44,6 +44,7 @@ class StreamWidget : public MinimalStreamWidget {
 
     Gtk::ToggleButton *lockToggleButton, *muteToggleButton;
     Gtk::Label *directionLabel;
+    Gtk::Label *inactiveLabel;
     Gtk::ComboBoxText *deviceComboBox;
 
     pa_channel_map channelMap;
@@ -62,6 +63,32 @@ class StreamWidget : public MinimalStreamWidget {
     virtual void executeVolumeUpdate();
     virtual void onKill(const Glib::VariantBase &parameter);
     virtual void onDeviceComboBoxChanged();
+
+    /* Set once the underlying sink-input/source-output has gone away but is
+     * still shown as recently-active history. The numeric index member on
+     * the subclass is no longer valid for PA calls once this is true. */
+    bool inactive;
+    gint64 inactiveSince;
+
+    /* The "module-stream-restore.id" of the underlying stream, captured
+     * while it was still live. Lets a ghosted entry's controls update the
+     * stream-restore database directly (by name) instead of the no-longer
+     * valid numeric index, so the adjustment applies next time a stream
+     * with this id reappears. */
+    Glib::ustring restoreId;
+
+    /* The matching key WirePlumber's own (PipeWire-side) stream-properties
+     * restore store would use for this stream, e.g.
+     * "Output/Audio:application.name:Firefox". On PipeWire systems this is
+     * the store that actually governs a new stream's initial volume, and
+     * it isn't kept in sync with the standard PulseAudio stream-restore
+     * extension above, so it needs its own write. Empty if unknown. */
+    Glib::ustring wpRestoreKey;
+
+    void markInactive();
+    void updateInactiveLabel();
+    void writeRestoreEntry();
+    void writeWirePlumberStateEntry();
 
   protected:
     MainWindow *mpMainWindow;

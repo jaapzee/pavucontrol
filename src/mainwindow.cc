@@ -66,6 +66,82 @@ struct source_port_prio_compare {
     }
 };
 
+/* WirePlumber escapes space/parentheses in the keys of its own
+ * stream-properties restore state (~/.local/state/wireplumber). */
+static Glib::ustring wirePlumberEscape(const char *s) {
+    Glib::ustring out;
+    for (; *s; s++) {
+        switch (*s) {
+            case ' ': out += "\\s"; break;
+            case '(': out += "\\o"; break;
+            case ')': out += "\\c"; break;
+            default: out += *s; break;
+        }
+    }
+    return out;
+}
+
+/* Mirrors WirePlumber's formKey() in state-stream.lua: first matching
+ * property wins, in this priority order. */
+static Glib::ustring formWirePlumberRestoreKey(const char *classPrefix, pa_proplist *proplist) {
+    static const char *const keys[] = { "media.role", "application.id", "application.name", "media.name", "node.name" };
+
+    for (const char *k : keys) {
+        const char *v = pa_proplist_gets(proplist, k);
+        if (v && *v)
+            return Glib::ustring(classPrefix) + ":" + k + ":" + wirePlumberEscape(v);
+    }
+
+    return Glib::ustring();
+}
+
+/* Looks for a ghosted widget for the same app as the newly (re)appeared
+ * stream.  The caller is responsible for deciding whether to revive the
+ * widget in-place (same channel count) or discard it and create a fresh
+ * one (channel count changed, since setChannelMap can't resize existing
+ * widgets). Either way the ghost is removed from the vector here so it
+ * never remains visible alongside the new live entry. */
+template<typename T>
+static T *findAndRemoveGhost(std::vector<T *> &ghosts, const Glib::ustring &restoreId, const Glib::ustring &wpRestoreKey) {
+    for (auto it = ghosts.begin(); it != ghosts.end(); ++it) {
+        T *w = *it;
+        if ((!restoreId.empty() && w->restoreId == restoreId) ||
+            (!wpRestoreKey.empty() && w->wpRestoreKey == wpRestoreKey)) {
+            ghosts.erase(it);
+            return w;
+        }
+    }
+    return NULL;
+}
+
+/* Collapses multiple ghosts that share the same app identity down to just
+ * the most recently stopped one (apps like browsers can open and close
+ * several distinct streams - one per tab/page-load - over time, and each
+ * stop would otherwise add its own separate, never-merged ghost tile). */
+template<typename T>
+static void dedupGhosts(std::vector<T *> &ghosts, Gtk::Box *vbox) {
+    std::map<Glib::ustring, size_t> lastByRestoreId, lastByWpRestoreKey;
+
+    for (size_t i = 0; i < ghosts.size(); i++) {
+        if (!ghosts[i]->restoreId.empty())
+            lastByRestoreId[ghosts[i]->restoreId] = i;
+        if (!ghosts[i]->wpRestoreKey.empty())
+            lastByWpRestoreKey[ghosts[i]->wpRestoreKey] = i;
+    }
+
+    std::vector<T *> kept;
+    for (size_t i = 0; i < ghosts.size(); i++) {
+        T *w = ghosts[i];
+        bool isLatest = (w->restoreId.empty() || lastByRestoreId[w->restoreId] == i) &&
+                         (w->wpRestoreKey.empty() || lastByWpRestoreKey[w->wpRestoreKey] == i);
+        if (isLatest)
+            kept.push_back(w);
+        else
+            vbox->remove(*w);
+    }
+    ghosts = kept;
+}
+
 MainWindow::MainWindow(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>& x) :
     Gtk::Window(cobject),
     showSinkInputType(SINK_INPUT_CLIENT),
@@ -102,6 +178,7 @@ MainWindow::MainWindow(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>
     monoAudioSwitch = x->get_widget<Gtk::Switch>("monoAudioSwitch");
     btAutoswitchLabel = x->get_widget<Gtk::Label>("btAutoswitchLabel");
     btAutoswitchSwitch = x->get_widget<Gtk::Switch>("btAutoswitchSwitch");
+    recentlyActiveSpinButton = x->get_widget<Gtk::SpinButton>("recentlyActiveSpinButton");
 
     sinkInputTypeComboBox->set_active((int) showSinkInputType);
     sourceOutputTypeComboBox->set_active((int) showSourceOutputType);
@@ -114,6 +191,7 @@ MainWindow::MainWindow(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>
     sourceTypeComboBox->signal_changed().connect(sigc::mem_fun(*this, &MainWindow::onSourceTypeComboBoxChanged));
     showVolumeMetersCheckButton->signal_toggled().connect(sigc::mem_fun(*this, &MainWindow::onShowVolumeMetersCheckButtonToggled));
     hideUnavailableCardProfilesCheckButton->signal_toggled().connect(sigc::mem_fun(*this, &MainWindow::onHideUnavailableCardProfilesCheckButtonToggled));
+    recentlyActiveSpinButton->signal_value_changed().connect(sigc::mem_fun(*this, &MainWindow::onRecentlyActiveSpinButtonChanged));
 
 #if HAVE_PULSE_MESSAGING_API
     monoAudioSwitch->signal_state_set().connect(sigc::mem_fun(*this, &MainWindow::onMonoAudioStateSet), false);
@@ -143,6 +221,9 @@ MainWindow::MainWindow(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>
         }
         if (g_key_file_has_key(config, "window", "hideUnavailableCardProfiles", NULL)) {
             hideUnavailableCardProfilesCheckButton->set_active(g_key_file_get_boolean(config, "window", "hideUnavailableCardProfiles", NULL));
+        }
+        if (g_key_file_has_key(config, "window", "recentlyActiveMinutes", NULL)) {
+            recentlyActiveSpinButton->set_value(g_key_file_get_integer(config, "window", "recentlyActiveMinutes", NULL));
         }
 
         int default_width, default_height;
@@ -252,6 +333,7 @@ MainWindow::~MainWindow() {
     g_key_file_set_integer(config, "window", "sourceType", sourceTypeComboBox->get_active_row_number());
     g_key_file_set_integer(config, "window", "showVolumeMeters", showVolumeMetersCheckButton->get_active());
     g_key_file_set_integer(config, "window", "hideUnavailableCardProfiles", hideUnavailableCardProfilesCheckButton->get_active());
+    g_key_file_set_integer(config, "window", "recentlyActiveMinutes", recentlyActiveSpinButton->get_value_as_int());
 
     gsize filelen;
     GError *err = NULL;
@@ -854,26 +936,70 @@ void MainWindow::updateSinkInput(const pa_sink_input_info &info) {
         }
     }
 
+    Glib::ustring newRestoreId = t ? t : "";
+    Glib::ustring newWpRestoreKey = formWirePlumberRestoreKey("Output/Audio", info.proplist);
+
     if (sinkInputWidgets.count(info.index)) {
         w = sinkInputWidgets[info.index];
         if (pa_context_get_server_protocol_version(get_context()) >= 13)
             if (w->sinkIndex() != info.sink)
                 createMonitorStreamForSinkInput(w, info.sink);
+    } else if (sinkInputSecondaryIndex.count(info.index)) {
+        /* Already tracked as a secondary stream — nothing to do. */
+        return;
     } else {
-        sinkInputWidgets[info.index] = w = SinkInputWidget::create(this);
-        w->setChannelMap(info.channel_map, true);
-        streamsVBox->append(*w);
-        w->unreference();
-        w->index = info.index;
-        w->clientIndex = info.client;
-        is_new = true;
-        w->setVolumeMeterVisible(showVolumeMetersCheckButton->get_active());
+        /* Check for a concurrent live stream from the same app first. */
+        uint32_t existingPrimary = PA_INVALID_INDEX;
+        if (!newRestoreId.empty() || !newWpRestoreKey.empty()) {
+            for (auto &kv : sinkInputWidgets) {
+                if ((!newRestoreId.empty() && kv.second->restoreId == newRestoreId) ||
+                    (!newWpRestoreKey.empty() && kv.second->wpRestoreKey == newWpRestoreKey)) {
+                    existingPrimary = kv.first;
+                    break;
+                }
+            }
+        }
+        if (existingPrimary != PA_INVALID_INDEX) {
+            /* Same app already has a live widget — suppress this stream. */
+            sinkInputSecondaryIndex[info.index] = existingPrimary;
+            return;
+        }
 
-        if (pa_context_get_server_protocol_version(get_context()) >= 13)
-            createMonitorStreamForSinkInput(w, info.sink);
+        SinkInputWidget *ghost = findAndRemoveGhost(inactiveSinkInputWidgets, newRestoreId, newWpRestoreKey);
+        if (ghost && ghost->channelMap.channels == info.channel_map.channels) {
+            /* Same app, same channel count - revive the ghost in place. */
+            w = ghost;
+            sinkInputWidgets[info.index] = w;
+            w->index = info.index;
+            w->clientIndex = info.client;
+            w->inactive = false;
+            w->inactiveLabel->hide();
+            is_new = true;
+
+            if (pa_context_get_server_protocol_version(get_context()) >= 13)
+                createMonitorStreamForSinkInput(w, info.sink);
+        } else {
+            /* No matching ghost, or channel count changed - discard ghost and create fresh. */
+            if (ghost)
+                streamsVBox->remove(*ghost);
+            sinkInputWidgets[info.index] = w = SinkInputWidget::create(this);
+            w->setChannelMap(info.channel_map, true);
+            streamsVBox->append(*w);
+            w->unreference();
+            w->index = info.index;
+            w->clientIndex = info.client;
+            is_new = true;
+            w->setVolumeMeterVisible(showVolumeMetersCheckButton->get_active());
+
+            if (pa_context_get_server_protocol_version(get_context()) >= 13)
+                createMonitorStreamForSinkInput(w, info.sink);
+        }
     }
 
     w->updating = true;
+
+    w->restoreId = newRestoreId;
+    w->wpRestoreKey = newWpRestoreKey;
 
     w->type = info.client != PA_INVALID_INDEX ? SINK_INPUT_CLIENT : SINK_INPUT_VIRTUAL;
 
@@ -914,22 +1040,63 @@ void MainWindow::updateSourceOutput(const pa_source_output_info &info) {
             || strcmp(app, "org.kde.kmixd") == 0)
             return;
 
+    const char *t = pa_proplist_gets(info.proplist, "module-stream-restore.id");
+    Glib::ustring newRestoreId = t ? t : "";
+    Glib::ustring newWpRestoreKey = formWirePlumberRestoreKey("Input/Audio", info.proplist);
+
     if (sourceOutputWidgets.count(info.index))
         w = sourceOutputWidgets[info.index];
-    else {
-        sourceOutputWidgets[info.index] = w = SourceOutputWidget::create(this);
+    else if (sourceOutputSecondaryIndex.count(info.index)) {
+        /* Already tracked as a secondary stream — nothing to do. */
+        return;
+    } else {
+        /* Check for a concurrent live stream from the same app first. */
+        uint32_t existingPrimary = PA_INVALID_INDEX;
+        if (!newRestoreId.empty() || !newWpRestoreKey.empty()) {
+            for (auto &kv : sourceOutputWidgets) {
+                if ((!newRestoreId.empty() && kv.second->restoreId == newRestoreId) ||
+                    (!newWpRestoreKey.empty() && kv.second->wpRestoreKey == newWpRestoreKey)) {
+                    existingPrimary = kv.first;
+                    break;
+                }
+            }
+        }
+        if (existingPrimary != PA_INVALID_INDEX) {
+            sourceOutputSecondaryIndex[info.index] = existingPrimary;
+            return;
+        }
+
+        SourceOutputWidget *ghost = findAndRemoveGhost(inactiveSourceOutputWidgets, newRestoreId, newWpRestoreKey);
+        if (ghost && ghost->channelMap.channels == info.channel_map.channels) {
+            /* Same app, same channel count - revive the ghost in place. */
+            w = ghost;
+            sourceOutputWidgets[info.index] = w;
+            w->index = info.index;
+            w->clientIndex = info.client;
+            w->inactive = false;
+            w->inactiveLabel->hide();
+            is_new = true;
+        } else {
+            /* No matching ghost, or channel count changed - discard ghost and create fresh. */
+            if (ghost)
+                recsVBox->remove(*ghost);
+            sourceOutputWidgets[info.index] = w = SourceOutputWidget::create(this);
 #if HAVE_SOURCE_OUTPUT_VOLUMES
-        w->setChannelMap(info.channel_map, true);
+            w->setChannelMap(info.channel_map, true);
 #endif
-        recsVBox->append(*w);
-        w->unreference();
-        w->index = info.index;
-        w->clientIndex = info.client;
-        is_new = true;
-        w->setVolumeMeterVisible(showVolumeMetersCheckButton->get_active());
+            recsVBox->append(*w);
+            w->unreference();
+            w->index = info.index;
+            w->clientIndex = info.client;
+            is_new = true;
+            w->setVolumeMeterVisible(showVolumeMetersCheckButton->get_active());
+        }
     }
 
     w->updating = true;
+
+    w->restoreId = newRestoreId;
+    w->wpRestoreKey = newWpRestoreKey;
 
     w->type = info.client != PA_INVALID_INDEX ? SOURCE_OUTPUT_CLIENT : SOURCE_OUTPUT_VIRTUAL;
 
@@ -1217,6 +1384,14 @@ void MainWindow::reallyUpdateDeviceVisibility() {
         w->updating = false;
     }
 
+    for (SinkInputWidget *w : inactiveSinkInputWidgets) {
+        if (showSinkInputType == SINK_INPUT_ALL || w->type == showSinkInputType) {
+            w->show();
+            is_empty = false;
+        } else
+            w->hide();
+    }
+
     if (eventRoleWidget)
         is_empty = false;
 
@@ -1248,6 +1423,14 @@ void MainWindow::reallyUpdateDeviceVisibility() {
             w->hide();
 
         w->updating = false;
+    }
+
+    for (SourceOutputWidget *w : inactiveSourceOutputWidgets) {
+        if (showSourceOutputType == SOURCE_OUTPUT_ALL || w->type == showSourceOutputType) {
+            w->show();
+            is_empty = false;
+        } else
+            w->hide();
     }
 
     if (is_empty)
@@ -1347,21 +1530,124 @@ void MainWindow::removeSource(uint32_t index) {
 }
 
 void MainWindow::removeSinkInput(uint32_t index) {
+    /* Secondary stream disappearing — the primary widget stays. */
+    if (sinkInputSecondaryIndex.count(index)) {
+        sinkInputSecondaryIndex.erase(index);
+        return;
+    }
+
     if (!sinkInputWidgets.count(index))
         return;
 
-    streamsVBox->remove(*sinkInputWidgets[index]);
+    /* Primary disappearing — promote a secondary if one exists. */
+    for (auto it = sinkInputSecondaryIndex.begin(); it != sinkInputSecondaryIndex.end(); ++it) {
+        if (it->second == index) {
+            uint32_t secondaryIdx = it->first;
+            SinkInputWidget *w = sinkInputWidgets[index];
+            sinkInputWidgets.erase(index);
+            sinkInputWidgets[secondaryIdx] = w;
+            w->index = secondaryIdx;
+            sinkInputSecondaryIndex.erase(it);
+            updateDeviceVisibility();
+            return;
+        }
+    }
+
+    SinkInputWidget *w = sinkInputWidgets[index];
     sinkInputWidgets.erase(index);
+
+    if (recentlyActiveSpinButton->get_value_as_int() > 0) {
+        w->markInactive();
+        inactiveSinkInputWidgets.push_back(w);
+        dedupGhosts(inactiveSinkInputWidgets, streamsVBox);
+        ensureInactiveSweepRunning();
+    } else
+        streamsVBox->remove(*w);
+
     updateDeviceVisibility();
 }
 
 void MainWindow::removeSourceOutput(uint32_t index) {
+    /* Secondary stream disappearing — the primary widget stays. */
+    if (sourceOutputSecondaryIndex.count(index)) {
+        sourceOutputSecondaryIndex.erase(index);
+        return;
+    }
+
     if (!sourceOutputWidgets.count(index))
         return;
 
-    recsVBox->remove(*sourceOutputWidgets[index]);
+    /* Primary disappearing — promote a secondary if one exists. */
+    for (auto it = sourceOutputSecondaryIndex.begin(); it != sourceOutputSecondaryIndex.end(); ++it) {
+        if (it->second == index) {
+            uint32_t secondaryIdx = it->first;
+            SourceOutputWidget *w = sourceOutputWidgets[index];
+            sourceOutputWidgets.erase(index);
+            sourceOutputWidgets[secondaryIdx] = w;
+            w->index = secondaryIdx;
+            sourceOutputSecondaryIndex.erase(it);
+            updateDeviceVisibility();
+            return;
+        }
+    }
+
+    SourceOutputWidget *w = sourceOutputWidgets[index];
     sourceOutputWidgets.erase(index);
+
+    if (recentlyActiveSpinButton->get_value_as_int() > 0) {
+        w->markInactive();
+        inactiveSourceOutputWidgets.push_back(w);
+        dedupGhosts(inactiveSourceOutputWidgets, recsVBox);
+        ensureInactiveSweepRunning();
+    } else
+        recsVBox->remove(*w);
+
     updateDeviceVisibility();
+}
+
+void MainWindow::ensureInactiveSweepRunning() {
+    if (!inactiveSweepConnection.connected())
+        inactiveSweepConnection = Glib::signal_timeout().connect_seconds(
+            sigc::mem_fun(*this, &MainWindow::sweepInactiveWidgets), 15);
+}
+
+bool MainWindow::sweepInactiveWidgets() {
+    int minutes = recentlyActiveSpinButton->get_value_as_int();
+    gint64 maxAgeUs = (gint64) minutes * 60 * G_USEC_PER_SEC;
+    gint64 now = g_get_monotonic_time();
+
+    dedupGhosts(inactiveSinkInputWidgets, streamsVBox);
+    dedupGhosts(inactiveSourceOutputWidgets, recsVBox);
+
+    for (auto it = inactiveSinkInputWidgets.begin(); it != inactiveSinkInputWidgets.end();) {
+        SinkInputWidget *w = *it;
+        if (minutes <= 0 || now - w->inactiveSince >= maxAgeUs) {
+            streamsVBox->remove(*w);
+            it = inactiveSinkInputWidgets.erase(it);
+        } else {
+            w->updateInactiveLabel();
+            ++it;
+        }
+    }
+
+    for (auto it = inactiveSourceOutputWidgets.begin(); it != inactiveSourceOutputWidgets.end();) {
+        SourceOutputWidget *w = *it;
+        if (minutes <= 0 || now - w->inactiveSince >= maxAgeUs) {
+            recsVBox->remove(*w);
+            it = inactiveSourceOutputWidgets.erase(it);
+        } else {
+            w->updateInactiveLabel();
+            ++it;
+        }
+    }
+
+    updateDeviceVisibility();
+
+    return !(inactiveSinkInputWidgets.empty() && inactiveSourceOutputWidgets.empty());
+}
+
+void MainWindow::onRecentlyActiveSpinButtonChanged() {
+    sweepInactiveWidgets();
 }
 
 void MainWindow::removeClient(uint32_t index) {
@@ -1370,10 +1656,21 @@ void MainWindow::removeClient(uint32_t index) {
 }
 
 void MainWindow::removeAllWidgets() {
+    sinkInputSecondaryIndex.clear();
+    sourceOutputSecondaryIndex.clear();
     while (!sinkInputWidgets.empty())
         removeSinkInput(sinkInputWidgets.begin()->first);
     while (!sourceOutputWidgets.empty())
         removeSourceOutput(sourceOutputWidgets.begin()->first);
+
+    inactiveSweepConnection.disconnect();
+    for (SinkInputWidget *w : inactiveSinkInputWidgets)
+        streamsVBox->remove(*w);
+    inactiveSinkInputWidgets.clear();
+    for (SourceOutputWidget *w : inactiveSourceOutputWidgets)
+        recsVBox->remove(*w);
+    inactiveSourceOutputWidgets.clear();
+
     while (!sinkWidgets.empty())
         removeSink(sinkWidgets.begin()->first);
     while (!sourceWidgets.empty())

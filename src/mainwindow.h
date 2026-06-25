@@ -33,7 +33,9 @@ class MainWindow;
 #include <canberra.h>
 #endif
 
+#include <map>
 #include <unordered_map>
+#include <vector>
 
 class CardWidget;
 class SinkWidget;
@@ -95,6 +97,7 @@ class MainWindow : public Gtk::Window {
     Gtk::Switch *monoAudioSwitch;
     Gtk::Label *btAutoswitchLabel;
     Gtk::Switch *btAutoswitchSwitch;
+    Gtk::SpinButton *recentlyActiveSpinButton;
 
     std::map<uint32_t, CardWidget *> cardWidgets;
     std::map<uint32_t, SinkWidget *> sinkWidgets;
@@ -102,6 +105,18 @@ class MainWindow : public Gtk::Window {
     std::map<uint32_t, SinkInputWidget *> sinkInputWidgets;
     std::map<uint32_t, SourceOutputWidget *> sourceOutputWidgets;
     std::map<uint32_t, char *> clientNames;
+
+    std::vector<SinkInputWidget *> inactiveSinkInputWidgets;
+    std::vector<SourceOutputWidget *> inactiveSourceOutputWidgets;
+    sigc::connection inactiveSweepConnection;
+
+    /* Maps a secondary PA index to the primary index whose widget represents
+     * both streams.  When an app creates multiple concurrent sink-inputs with
+     * the same identity (same restoreId / wpRestoreKey) we suppress the extra
+     * widget and just track the index here, so removeSinkInput knows not to
+     * ghost the primary widget when only a secondary stream disappears. */
+    std::map<uint32_t, uint32_t> sinkInputSecondaryIndex;
+    std::map<uint32_t, uint32_t> sourceOutputSecondaryIndex;
 
     SinkInputType showSinkInputType;
     SinkType showSinkType;
@@ -116,6 +131,10 @@ class MainWindow : public Gtk::Window {
     virtual void onHideUnavailableCardProfilesCheckButtonToggled();
     virtual bool onMonoAudioStateSet(bool);
     virtual bool onBtAutoswitchSet(bool);
+    virtual void onRecentlyActiveSpinButtonChanged();
+
+    void ensureInactiveSweepRunning();
+    bool sweepInactiveWidgets();
 
     void setConnectionState(gboolean connected);
     void updateDeviceVisibility();

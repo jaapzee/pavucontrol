@@ -26,11 +26,21 @@
 #include "mainwindow.h"
 #include "channelwidget.h"
 
+#include <pulse/ext-stream-restore.h>
+#include <pulse/volume.h>
+
+#if HAVE_PULSE_MESSAGING_API
+#include <cstring>
+#include <json-glib/json-glib.h>
+#endif
+
 #include "i18n.h"
 
 /*** StreamWidget ***/
 StreamWidget::StreamWidget(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>& x) :
     MinimalStreamWidget(cobject),
+    inactive(false),
+    inactiveSince(0),
     mpMainWindow(NULL) {
 
     /* MinimalStreamWidget member variables. */
@@ -42,6 +52,7 @@ StreamWidget::StreamWidget(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Buil
     lockToggleButton = x->get_widget<Gtk::ToggleButton>("streamLockToggleButton");
     muteToggleButton = x->get_widget<Gtk::ToggleButton>("streamMuteToggleButton");
     directionLabel = x->get_widget<Gtk::Label>("directionLabel");
+    inactiveLabel = x->get_widget<Gtk::Label>("streamInactiveLabel");
     deviceComboBox = x->get_widget<Gtk::ComboBoxText>("deviceComboBox");
 
     muteToggleButton->signal_clicked().connect(sigc::mem_fun(*this, &StreamWidget::onMuteToggleButton));
@@ -165,4 +176,157 @@ void StreamWidget::onKill(const Glib::VariantBase& parameter) {
 }
 
 void StreamWidget::onDeviceComboBoxChanged() {
+}
+
+void StreamWidget::markInactive() {
+    inactive = true;
+    inactiveSince = g_get_monotonic_time();
+    updateInactiveLabel();
+    inactiveLabel->show();
+}
+
+void StreamWidget::writeRestoreEntry() {
+    if (!restoreId.empty()) {
+        pa_ext_stream_restore_info info;
+        pa_operation *o;
+
+        Glib::ustring deviceId = deviceComboBox->get_active_id();
+
+        info.name = restoreId.c_str();
+        info.channel_map = channelMap;
+        info.volume = volume;
+        info.device = (deviceId.empty() || deviceId == UNKNOWN_DEVICE_NAME) ? NULL : deviceId.c_str();
+        info.mute = muteToggleButton->get_active();
+
+        if (!(o = pa_ext_stream_restore_write(get_context(), PA_UPDATE_REPLACE, &info, 1, TRUE, NULL, NULL)))
+            show_error(this, _("pa_ext_stream_restore_write() failed"));
+        else
+            pa_operation_unref(o);
+    }
+
+    /* Best-effort: on PipeWire systems, the call above updates the
+     * standard PulseAudio stream-restore database, but that database is
+     * not what actually governs a new stream's initial volume there (see
+     * writeWirePlumberStateEntry()). Update WirePlumber's own store too. */
+    writeWirePlumberStateEntry();
+}
+
+void StreamWidget::writeWirePlumberStateEntry() {
+#if HAVE_PULSE_MESSAGING_API
+    if (wpRestoreKey.empty())
+        return;
+
+    gchar *dir = g_build_filename(g_get_user_state_dir(), "wireplumber", NULL);
+    gchar *path = g_build_filename(dir, "stream-properties", NULL);
+
+    GKeyFile *kf = g_key_file_new();
+    GKeyFileFlags flags = (GKeyFileFlags) (G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS);
+    /* Not present yet on a system that never ran WirePlumber's
+     * stream-restore is fine; we start a fresh keyfile in that case. */
+    g_key_file_load_from_file(kf, path, flags, NULL);
+
+    gchar *existing = g_key_file_get_string(kf, "stream-properties", wpRestoreKey.c_str(), NULL);
+
+    JsonObject *obj = NULL;
+    if (existing) {
+        JsonParser *parser = json_parser_new();
+        if (json_parser_load_from_data(parser, existing, -1, NULL)) {
+            JsonNode *root = json_parser_get_root(parser);
+            if (root && JSON_NODE_HOLDS_OBJECT(root))
+                obj = json_object_ref(json_node_get_object(root));
+        }
+        g_object_unref(parser);
+        g_free(existing);
+    }
+    if (!obj)
+        obj = json_object_new();
+
+    /* Preserve any other fields already in the entry (e.g. WirePlumber's
+     * own "target" / "channelMap") and only touch what we actually know. */
+    if (!json_object_has_member(obj, "volume"))
+        json_object_set_double_member(obj, "volume", 1.0);
+    json_object_set_boolean_member(obj, "mute", muteToggleButton->get_active());
+
+    JsonArray *channelVolumes = json_array_new();
+    for (int i = 0; i < volume.channels; i++)
+        json_array_add_double_element(channelVolumes, pa_sw_volume_to_linear(volume.values[i]));
+    json_object_set_array_member(obj, "channelVolumes", channelVolumes);
+
+    JsonNode *outNode = json_node_new(JSON_NODE_OBJECT);
+    json_node_set_object(outNode, obj);
+
+    JsonGenerator *gen = json_generator_new();
+    json_generator_set_root(gen, outNode);
+    gchar *serialized = json_generator_to_data(gen, NULL);
+
+    g_key_file_set_string(kf, "stream-properties", wpRestoreKey.c_str(), serialized);
+
+    g_mkdir_with_parents(dir, 0700);
+
+    GError *err = NULL;
+    if (!g_key_file_save_to_file(kf, path, &err)) {
+        g_debug("Failed to update WirePlumber stream-properties state: %s", err->message);
+        g_error_free(err);
+    } else {
+        /* WirePlumber's state-stream.lua only reloads this file from disk
+         * when its "node.stream.restore-props" / "node.stream.restore-target"
+         * settings transition from (both false) to (either true) - see
+         * toggleState()/Settings.subscribe() there. Drive that transition
+         * to force a reload before our edit can be clobbered by
+         * WirePlumber's own next (stale, in-memory) save, then restore
+         * whatever the two settings actually were, since either may have
+         * been customized to false already. Best-effort: any failure here
+         * (e.g. wpctl not installed, not running WirePlumber) is silently
+         * ignored, since the standard PA write above already happened. */
+        GSpawnFlags spawnFlags = (GSpawnFlags) (G_SPAWN_SEARCH_PATH | G_SPAWN_STDOUT_TO_DEV_NULL | G_SPAWN_STDERR_TO_DEV_NULL);
+
+        auto queryBool = [&](const gchar *key) -> int {
+            const gchar *argv[] = { "wpctl", "settings", key, NULL };
+            gchar *out = NULL;
+            if (!g_spawn_sync(NULL, (gchar **) argv, NULL, (GSpawnFlags) G_SPAWN_SEARCH_PATH,
+                              NULL, NULL, &out, NULL, NULL, NULL) || !out)
+                return -1;
+            int result = strstr(out, "Value: true") ? 1 : strstr(out, "Value: false") ? 0 : -1;
+            g_free(out);
+            return result;
+        };
+        auto setBool = [&](const gchar *key, gboolean value) {
+            const gchar *argv[] = { "wpctl", "settings", key, value ? "true" : "false", NULL };
+            g_spawn_sync(NULL, (gchar **) argv, NULL, spawnFlags, NULL, NULL, NULL, NULL, NULL, NULL);
+        };
+
+        int propsWas = queryBool("node.stream.restore-props");
+        int targetWas = queryBool("node.stream.restore-target");
+
+        if (propsWas >= 0 && targetWas >= 0 && (propsWas || targetWas)) {
+            setBool("node.stream.restore-props", FALSE);
+            setBool("node.stream.restore-target", FALSE);
+            setBool("node.stream.restore-props", propsWas);
+            setBool("node.stream.restore-target", targetWas);
+        }
+    }
+
+    g_free(serialized);
+    g_object_unref(gen);
+    json_node_free(outNode);
+    json_object_unref(obj);
+    g_key_file_free(kf);
+    g_free(path);
+    g_free(dir);
+#endif
+}
+
+void StreamWidget::updateInactiveLabel() {
+    gint64 elapsedMinutes = (g_get_monotonic_time() - inactiveSince) / G_USEC_PER_SEC / 60;
+    gchar *text, *markup;
+
+    if (elapsedMinutes < 1)
+        text = g_strdup(_("stopped less than a minute ago"));
+    else
+        text = g_strdup_printf(_("stopped %d min ago"), (int) elapsedMinutes);
+
+    markup = g_markup_printf_escaped("<i>(%s)</i>", text);
+    inactiveLabel->set_markup(markup);
+    g_free(text);
+    g_free(markup);
 }

@@ -83,6 +83,14 @@ void SinkInputWidget::updateDeviceComboBox() {
 void SinkInputWidget::executeVolumeUpdate() {
     pa_operation* o;
 
+    if (inactive) {
+        /* No live stream to address by index anymore. Update the
+         * stream-restore database instead, so this volume is applied
+         * the next time a stream with this restore id reappears. */
+        writeRestoreEntry();
+        return;
+    }
+
     if (!(o = pa_context_set_sink_input_volume(get_context(), index, &volume, NULL, NULL))) {
         show_error(this, _("pa_context_set_sink_input_volume() failed"));
         return;
@@ -97,6 +105,11 @@ void SinkInputWidget::onMuteToggleButton() {
     if (updating)
         return;
 
+    if (inactive) {
+        writeRestoreEntry();
+        return;
+    }
+
     pa_operation* o;
     if (!(o = pa_context_set_sink_input_mute(get_context(), index, muteToggleButton->get_active(), NULL, NULL))) {
         show_error(this, _("pa_context_set_sink_input_mute() failed"));
@@ -108,6 +121,10 @@ void SinkInputWidget::onMuteToggleButton() {
 
 void SinkInputWidget::onKill(const Glib::VariantBase& parameter) {
     pa_operation* o;
+
+    if (inactive)
+        return;
+
     if (!(o = pa_context_kill_sink_input(get_context(), index, NULL, NULL))) {
         show_error(this, _("pa_context_kill_sink_input() failed"));
         return;
@@ -119,6 +136,11 @@ void SinkInputWidget::onKill(const Glib::VariantBase& parameter) {
 void SinkInputWidget::onDeviceComboBoxChanged() {
     if (updating)
         return;
+
+    if (inactive) {
+        writeRestoreEntry();
+        return;
+    }
 
     Glib::ustring sinkName = deviceComboBox->get_active_id();
 

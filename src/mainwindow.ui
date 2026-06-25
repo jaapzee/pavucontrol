@@ -489,6 +489,37 @@
                                         <property name="active">0</property>
                                       </object>
                                     </child>
+                                    <child>
+                                      <object class="GtkBox" id="recentlyActiveBox">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">12</property>
+                                        <property name="tooltip-text" translatable="yes">Keep apps that stopped playing or recording visible for this many minutes (0 disables this)</property>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label" translatable="yes">Show recently active apps for</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkSpinButton" id="recentlyActiveSpinButton">
+                                            <property name="focusable">1</property>
+                                            <property name="numeric">1</property>
+                                            <property name="adjustment">
+                                              <object class="GtkAdjustment" id="recentlyActiveAdjustment">
+                                                <property name="lower">0</property>
+                                                <property name="upper">60</property>
+                                                <property name="step-increment">1</property>
+                                                <property name="page-increment">5</property>
+                                              </object>
+                                            </property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label" translatable="yes">minutes (0 = off)</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
                               </object>

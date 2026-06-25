@@ -89,6 +89,14 @@ void SourceOutputWidget::updateDeviceComboBox() {
 void SourceOutputWidget::executeVolumeUpdate() {
     pa_operation* o;
 
+    if (inactive) {
+        /* No live stream to address by index anymore. Update the
+         * stream-restore database instead, so this volume is applied
+         * the next time a stream with this restore id reappears. */
+        writeRestoreEntry();
+        return;
+    }
+
     if (!(o = pa_context_set_source_output_volume(get_context(), index, &volume, NULL, NULL))) {
         show_error(this, _("pa_context_set_source_output_volume() failed"));
         return;
@@ -103,6 +111,11 @@ void SourceOutputWidget::onMuteToggleButton() {
     if (updating)
         return;
 
+    if (inactive) {
+        writeRestoreEntry();
+        return;
+    }
+
     pa_operation* o;
     if (!(o = pa_context_set_source_output_mute(get_context(), index, muteToggleButton->get_active(), NULL, NULL))) {
         show_error(this, _("pa_context_set_source_output_mute() failed"));
@@ -115,6 +128,10 @@ void SourceOutputWidget::onMuteToggleButton() {
 
 void SourceOutputWidget::onKill(const Glib::VariantBase& parameter) {
     pa_operation* o;
+
+    if (inactive)
+        return;
+
     if (!(o = pa_context_kill_source_output(get_context(), index, NULL, NULL))) {
         show_error(this, _("pa_context_kill_source_output() failed"));
         return;
@@ -126,6 +143,11 @@ void SourceOutputWidget::onKill(const Glib::VariantBase& parameter) {
 void SourceOutputWidget::onDeviceComboBoxChanged() {
     if (updating)
         return;
+
+    if (inactive) {
+        writeRestoreEntry();
+        return;
+    }
 
     Glib::ustring sourceName = deviceComboBox->get_active_id();
 
