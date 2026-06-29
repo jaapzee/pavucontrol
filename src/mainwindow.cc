@@ -945,7 +945,21 @@ void MainWindow::updateSinkInput(const pa_sink_input_info &info) {
             if (w->sinkIndex() != info.sink)
                 createMonitorStreamForSinkInput(w, info.sink);
     } else if (sinkInputSecondaryIndex.count(info.index)) {
-        /* Already tracked as a secondary stream — nothing to do. */
+        /* Volume/state change on a tracked secondary: push the new value into
+         * the primary widget so pavucontrol and GNOME/WirePlumber stay in sync.
+         * Skip if the user is mid-drag (timeout pending) or channel counts
+         * differ (can't map volumes across a layout change). */
+        uint32_t primaryIdx = sinkInputSecondaryIndex[info.index];
+        auto pit = sinkInputWidgets.find(primaryIdx);
+        if (pit != sinkInputWidgets.end() && !pit->second->inactive &&
+            pit->second->timeoutConnection.empty() &&
+            info.channel_map.channels == pit->second->channelMap.channels) {
+            SinkInputWidget *p = pit->second;
+            p->updating = true;
+            p->setVolume(info.volume);
+            p->muteToggleButton->set_active(info.mute);
+            p->updating = false;
+        }
         return;
     } else {
         /* Check for a concurrent live stream from the same app first. */
@@ -1047,7 +1061,17 @@ void MainWindow::updateSourceOutput(const pa_source_output_info &info) {
     if (sourceOutputWidgets.count(info.index))
         w = sourceOutputWidgets[info.index];
     else if (sourceOutputSecondaryIndex.count(info.index)) {
-        /* Already tracked as a secondary stream — nothing to do. */
+        uint32_t primaryIdx = sourceOutputSecondaryIndex[info.index];
+        auto pit = sourceOutputWidgets.find(primaryIdx);
+        if (pit != sourceOutputWidgets.end() && !pit->second->inactive &&
+            pit->second->timeoutConnection.empty() &&
+            info.channel_map.channels == pit->second->channelMap.channels) {
+            SourceOutputWidget *p = pit->second;
+            p->updating = true;
+            p->setVolume(info.volume);
+            p->muteToggleButton->set_active(info.mute);
+            p->updating = false;
+        }
         return;
     } else {
         /* Check for a concurrent live stream from the same app first. */
