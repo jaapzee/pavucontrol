@@ -149,6 +149,8 @@ MainWindow::MainWindow(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>
     showSourceOutputType(SOURCE_OUTPUT_CLIENT),
     showSourceType(SOURCE_NO_MONITOR),
     eventRoleWidget(NULL),
+    eventRoleSinkInputIndex(PA_INVALID_INDEX),
+    eventRoleSinkInputChannels(1),
     canRenameDevices(false),
     m_connected(false),
     m_config_filename(NULL) {
@@ -931,7 +933,17 @@ void MainWindow::updateSinkInput(const pa_sink_input_info &info) {
 
     if ((t = pa_proplist_gets(info.proplist, "module-stream-restore.id"))) {
         if (strcmp(t, "sink-input-by-media-role:event") == 0) {
-            g_debug(_("Ignoring sink-input due to it being designated as an event and thus handled by the Event widget"));
+            eventRoleSinkInputIndex = info.index;
+            eventRoleSinkInputChannels = info.channel_map.channels;
+            if (eventRoleWidget) {
+                eventRoleWidget->updating = true;
+                pa_cvolume vol;
+                vol.channels = 1;
+                vol.values[0] = pa_cvolume_max(&info.volume);
+                eventRoleWidget->setVolume(vol);
+                eventRoleWidget->muteToggleButton->set_active(info.mute);
+                eventRoleWidget->updating = false;
+            }
             return;
         }
     }
@@ -1491,6 +1503,11 @@ void MainWindow::removeSource(uint32_t index) {
 }
 
 void MainWindow::removeSinkInput(uint32_t index) {
+    if (index == eventRoleSinkInputIndex) {
+        eventRoleSinkInputIndex = PA_INVALID_INDEX;
+        return;
+    }
+
     if (!sinkInputWidgets.count(index))
         return;
 

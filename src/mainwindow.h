@@ -139,6 +139,8 @@ class MainWindow : public Gtk::Window {
                              const char *name);
 
     RoleWidget *eventRoleWidget;
+    uint32_t eventRoleSinkInputIndex;
+    uint8_t eventRoleSinkInputChannels;
 
     bool createEventRoleWidget();
     void deleteEventRoleWidget();

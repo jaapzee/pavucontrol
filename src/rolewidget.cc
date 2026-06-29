@@ -68,7 +68,16 @@ void RoleWidget::executeVolumeUpdate() {
         show_error(this, _("pa_ext_stream_restore_write() failed"));
         return;
     }
-
     pa_operation_unref(o);
+
+    uint32_t idx = mpMainWindow->eventRoleSinkInputIndex;
+    if (idx != PA_INVALID_INDEX) {
+        pa_cvolume v;
+        pa_cvolume_set(&v, mpMainWindow->eventRoleSinkInputChannels, volume.values[0]);
+        if ((o = pa_context_set_sink_input_volume(get_context(), idx, &v, NULL, NULL)))
+            pa_operation_unref(o);
+        if ((o = pa_context_set_sink_input_mute(get_context(), idx, info.mute, NULL, NULL)))
+            pa_operation_unref(o);
+    }
 }
 
