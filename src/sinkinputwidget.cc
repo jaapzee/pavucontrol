@@ -95,8 +95,17 @@ void SinkInputWidget::executeVolumeUpdate() {
         show_error(this, _("pa_context_set_sink_input_volume() failed"));
         return;
     }
-
     pa_operation_unref(o);
+
+    /* Propagate to concurrent secondary streams (same app, suppressed as
+     * duplicates) so the widget controls all of the app's audio, not just
+     * whichever stream happened to arrive first. */
+    for (auto &kv : mpMainWindow->sinkInputSecondaryIndex) {
+        if (kv.second == index) {
+            if ((o = pa_context_set_sink_input_volume(get_context(), kv.first, &volume, NULL, NULL)))
+                pa_operation_unref(o);
+        }
+    }
 }
 
 void SinkInputWidget::onMuteToggleButton() {
@@ -115,8 +124,14 @@ void SinkInputWidget::onMuteToggleButton() {
         show_error(this, _("pa_context_set_sink_input_mute() failed"));
         return;
     }
-
     pa_operation_unref(o);
+
+    for (auto &kv : mpMainWindow->sinkInputSecondaryIndex) {
+        if (kv.second == index) {
+            if ((o = pa_context_set_sink_input_mute(get_context(), kv.first, muteToggleButton->get_active(), NULL, NULL)))
+                pa_operation_unref(o);
+        }
+    }
 }
 
 void SinkInputWidget::onKill(const Glib::VariantBase& parameter) {

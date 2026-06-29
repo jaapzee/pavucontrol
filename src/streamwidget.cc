@@ -267,43 +267,6 @@ void StreamWidget::writeWirePlumberStateEntry() {
     if (!g_key_file_save_to_file(kf, path, &err)) {
         g_debug("Failed to update WirePlumber stream-properties state: %s", err->message);
         g_error_free(err);
-    } else {
-        /* WirePlumber's state-stream.lua only reloads this file from disk
-         * when its "node.stream.restore-props" / "node.stream.restore-target"
-         * settings transition from (both false) to (either true) - see
-         * toggleState()/Settings.subscribe() there. Drive that transition
-         * to force a reload before our edit can be clobbered by
-         * WirePlumber's own next (stale, in-memory) save, then restore
-         * whatever the two settings actually were, since either may have
-         * been customized to false already. Best-effort: any failure here
-         * (e.g. wpctl not installed, not running WirePlumber) is silently
-         * ignored, since the standard PA write above already happened. */
-        GSpawnFlags spawnFlags = (GSpawnFlags) (G_SPAWN_SEARCH_PATH | G_SPAWN_STDOUT_TO_DEV_NULL | G_SPAWN_STDERR_TO_DEV_NULL);
-
-        auto queryBool = [&](const gchar *key) -> int {
-            const gchar *argv[] = { "wpctl", "settings", key, NULL };
-            gchar *out = NULL;
-            if (!g_spawn_sync(NULL, (gchar **) argv, NULL, (GSpawnFlags) G_SPAWN_SEARCH_PATH,
-                              NULL, NULL, &out, NULL, NULL, NULL) || !out)
-                return -1;
-            int result = strstr(out, "Value: true") ? 1 : strstr(out, "Value: false") ? 0 : -1;
-            g_free(out);
-            return result;
-        };
-        auto setBool = [&](const gchar *key, gboolean value) {
-            const gchar *argv[] = { "wpctl", "settings", key, value ? "true" : "false", NULL };
-            g_spawn_sync(NULL, (gchar **) argv, NULL, spawnFlags, NULL, NULL, NULL, NULL, NULL, NULL);
-        };
-
-        int propsWas = queryBool("node.stream.restore-props");
-        int targetWas = queryBool("node.stream.restore-target");
-
-        if (propsWas >= 0 && targetWas >= 0 && (propsWas || targetWas)) {
-            setBool("node.stream.restore-props", FALSE);
-            setBool("node.stream.restore-target", FALSE);
-            setBool("node.stream.restore-props", propsWas);
-            setBool("node.stream.restore-target", targetWas);
-        }
     }
 
     g_free(serialized);
