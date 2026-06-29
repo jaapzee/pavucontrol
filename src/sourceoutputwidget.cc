@@ -102,13 +102,6 @@ void SourceOutputWidget::executeVolumeUpdate() {
         return;
     }
     pa_operation_unref(o);
-
-    for (auto &kv : mpMainWindow->sourceOutputSecondaryIndex) {
-        if (kv.second == index) {
-            if ((o = pa_context_set_source_output_volume(get_context(), kv.first, &volume, NULL, NULL)))
-                pa_operation_unref(o);
-        }
-    }
 }
 
 void SourceOutputWidget::onMuteToggleButton() {
@@ -128,13 +121,6 @@ void SourceOutputWidget::onMuteToggleButton() {
         return;
     }
     pa_operation_unref(o);
-
-    for (auto &kv : mpMainWindow->sourceOutputSecondaryIndex) {
-        if (kv.second == index) {
-            if ((o = pa_context_set_source_output_mute(get_context(), kv.first, muteToggleButton->get_active(), NULL, NULL)))
-                pa_operation_unref(o);
-        }
-    }
 }
 #endif
 

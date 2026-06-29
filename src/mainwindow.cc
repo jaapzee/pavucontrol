@@ -944,41 +944,7 @@ void MainWindow::updateSinkInput(const pa_sink_input_info &info) {
         if (pa_context_get_server_protocol_version(get_context()) >= 13)
             if (w->sinkIndex() != info.sink)
                 createMonitorStreamForSinkInput(w, info.sink);
-    } else if (sinkInputSecondaryIndex.count(info.index)) {
-        /* Volume/state change on a tracked secondary: push the new value into
-         * the primary widget so pavucontrol and GNOME/WirePlumber stay in sync.
-         * Skip if the user is mid-drag (timeout pending) or channel counts
-         * differ (can't map volumes across a layout change). */
-        uint32_t primaryIdx = sinkInputSecondaryIndex[info.index];
-        auto pit = sinkInputWidgets.find(primaryIdx);
-        if (pit != sinkInputWidgets.end() && !pit->second->inactive &&
-            pit->second->timeoutConnection.empty() &&
-            info.channel_map.channels == pit->second->channelMap.channels) {
-            SinkInputWidget *p = pit->second;
-            p->updating = true;
-            p->setVolume(info.volume);
-            p->muteToggleButton->set_active(info.mute);
-            p->updating = false;
-        }
-        return;
     } else {
-        /* Check for a concurrent live stream from the same app first. */
-        uint32_t existingPrimary = PA_INVALID_INDEX;
-        if (!newRestoreId.empty() || !newWpRestoreKey.empty()) {
-            for (auto &kv : sinkInputWidgets) {
-                if ((!newRestoreId.empty() && kv.second->restoreId == newRestoreId) ||
-                    (!newWpRestoreKey.empty() && kv.second->wpRestoreKey == newWpRestoreKey)) {
-                    existingPrimary = kv.first;
-                    break;
-                }
-            }
-        }
-        if (existingPrimary != PA_INVALID_INDEX) {
-            /* Same app already has a live widget — suppress this stream. */
-            sinkInputSecondaryIndex[info.index] = existingPrimary;
-            return;
-        }
-
         SinkInputWidget *ghost = findAndRemoveGhost(inactiveSinkInputWidgets, newRestoreId, newWpRestoreKey);
         if (ghost && ghost->channelMap.channels == info.channel_map.channels) {
             /* Same app, same channel count - revive the ghost in place. */
@@ -1060,36 +1026,7 @@ void MainWindow::updateSourceOutput(const pa_source_output_info &info) {
 
     if (sourceOutputWidgets.count(info.index))
         w = sourceOutputWidgets[info.index];
-    else if (sourceOutputSecondaryIndex.count(info.index)) {
-        uint32_t primaryIdx = sourceOutputSecondaryIndex[info.index];
-        auto pit = sourceOutputWidgets.find(primaryIdx);
-        if (pit != sourceOutputWidgets.end() && !pit->second->inactive &&
-            pit->second->timeoutConnection.empty() &&
-            info.channel_map.channels == pit->second->channelMap.channels) {
-            SourceOutputWidget *p = pit->second;
-            p->updating = true;
-            p->setVolume(info.volume);
-            p->muteToggleButton->set_active(info.mute);
-            p->updating = false;
-        }
-        return;
-    } else {
-        /* Check for a concurrent live stream from the same app first. */
-        uint32_t existingPrimary = PA_INVALID_INDEX;
-        if (!newRestoreId.empty() || !newWpRestoreKey.empty()) {
-            for (auto &kv : sourceOutputWidgets) {
-                if ((!newRestoreId.empty() && kv.second->restoreId == newRestoreId) ||
-                    (!newWpRestoreKey.empty() && kv.second->wpRestoreKey == newWpRestoreKey)) {
-                    existingPrimary = kv.first;
-                    break;
-                }
-            }
-        }
-        if (existingPrimary != PA_INVALID_INDEX) {
-            sourceOutputSecondaryIndex[info.index] = existingPrimary;
-            return;
-        }
-
+    else {
         SourceOutputWidget *ghost = findAndRemoveGhost(inactiveSourceOutputWidgets, newRestoreId, newWpRestoreKey);
         if (ghost && ghost->channelMap.channels == info.channel_map.channels) {
             /* Same app, same channel count - revive the ghost in place. */
@@ -1554,28 +1491,8 @@ void MainWindow::removeSource(uint32_t index) {
 }
 
 void MainWindow::removeSinkInput(uint32_t index) {
-    /* Secondary stream disappearing — the primary widget stays. */
-    if (sinkInputSecondaryIndex.count(index)) {
-        sinkInputSecondaryIndex.erase(index);
-        return;
-    }
-
     if (!sinkInputWidgets.count(index))
         return;
-
-    /* Primary disappearing — promote a secondary if one exists. */
-    for (auto it = sinkInputSecondaryIndex.begin(); it != sinkInputSecondaryIndex.end(); ++it) {
-        if (it->second == index) {
-            uint32_t secondaryIdx = it->first;
-            SinkInputWidget *w = sinkInputWidgets[index];
-            sinkInputWidgets.erase(index);
-            sinkInputWidgets[secondaryIdx] = w;
-            w->index = secondaryIdx;
-            sinkInputSecondaryIndex.erase(it);
-            updateDeviceVisibility();
-            return;
-        }
-    }
 
     SinkInputWidget *w = sinkInputWidgets[index];
     sinkInputWidgets.erase(index);
@@ -1592,28 +1509,8 @@ void MainWindow::removeSinkInput(uint32_t index) {
 }
 
 void MainWindow::removeSourceOutput(uint32_t index) {
-    /* Secondary stream disappearing — the primary widget stays. */
-    if (sourceOutputSecondaryIndex.count(index)) {
-        sourceOutputSecondaryIndex.erase(index);
-        return;
-    }
-
     if (!sourceOutputWidgets.count(index))
         return;
-
-    /* Primary disappearing — promote a secondary if one exists. */
-    for (auto it = sourceOutputSecondaryIndex.begin(); it != sourceOutputSecondaryIndex.end(); ++it) {
-        if (it->second == index) {
-            uint32_t secondaryIdx = it->first;
-            SourceOutputWidget *w = sourceOutputWidgets[index];
-            sourceOutputWidgets.erase(index);
-            sourceOutputWidgets[secondaryIdx] = w;
-            w->index = secondaryIdx;
-            sourceOutputSecondaryIndex.erase(it);
-            updateDeviceVisibility();
-            return;
-        }
-    }
 
     SourceOutputWidget *w = sourceOutputWidgets[index];
     sourceOutputWidgets.erase(index);
@@ -1680,8 +1577,6 @@ void MainWindow::removeClient(uint32_t index) {
 }
 
 void MainWindow::removeAllWidgets() {
-    sinkInputSecondaryIndex.clear();
-    sourceOutputSecondaryIndex.clear();
     while (!sinkInputWidgets.empty())
         removeSinkInput(sinkInputWidgets.begin()->first);
     while (!sourceOutputWidgets.empty())

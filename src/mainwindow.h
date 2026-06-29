@@ -110,14 +110,6 @@ class MainWindow : public Gtk::Window {
     std::vector<SourceOutputWidget *> inactiveSourceOutputWidgets;
     sigc::connection inactiveSweepConnection;
 
-    /* Maps a secondary PA index to the primary index whose widget represents
-     * both streams.  When an app creates multiple concurrent sink-inputs with
-     * the same identity (same restoreId / wpRestoreKey) we suppress the extra
-     * widget and just track the index here, so removeSinkInput knows not to
-     * ghost the primary widget when only a secondary stream disappears. */
-    std::map<uint32_t, uint32_t> sinkInputSecondaryIndex;
-    std::map<uint32_t, uint32_t> sourceOutputSecondaryIndex;
-
     SinkInputType showSinkInputType;
     SinkType showSinkType;
     SourceOutputType showSourceOutputType;
