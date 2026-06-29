@@ -1160,6 +1160,7 @@ bool MainWindow::createEventRoleWidget() {
     eventRoleWidget = RoleWidget::create();
     streamsVBox->append(*eventRoleWidget);
     eventRoleWidget->unreference();
+    eventRoleWidget->init(this);
     eventRoleWidget->role = "sink-input-by-media-role:event";
     eventRoleWidget->setChannelMap(cm, true);
 
@@ -1201,17 +1202,23 @@ void MainWindow::updateRole(const pa_ext_stream_restore_info &info) {
 
     is_new = createEventRoleWidget();
 
-    eventRoleWidget->updating = true;
-
     eventRoleWidget->device = info.device ? info.device : "";
 
-    volume.channels = 1;
-    volume.values[0] = pa_cvolume_max(&info.volume);
+    /* Only apply stream-restore volume when no live event stream is active.
+     * If a live stream is playing, its volume is the source of truth and
+     * updateSinkInput() already keeps the widget in sync; letting the stream-
+     * restore callback overwrite it would cause a visible flicker. */
+    if (eventRoleSinkInputIndex == PA_INVALID_INDEX) {
+        eventRoleWidget->updating = true;
 
-    eventRoleWidget->setVolume(volume);
-    eventRoleWidget->muteToggleButton->set_active(info.mute);
+        volume.channels = 1;
+        volume.values[0] = pa_cvolume_max(&info.volume);
 
-    eventRoleWidget->updating = false;
+        eventRoleWidget->setVolume(volume);
+        eventRoleWidget->muteToggleButton->set_active(info.mute);
+
+        eventRoleWidget->updating = false;
+    }
 
     if (is_new)
         updateDeviceVisibility();
