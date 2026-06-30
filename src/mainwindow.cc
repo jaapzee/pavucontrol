@@ -153,6 +153,7 @@ MainWindow::MainWindow(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>
     eventRoleSinkInputChannels(1),
     eventRoleRestoreVolume{1, {PA_VOLUME_NORM}},
     eventRoleRestoreMute(false),
+    eventRoleRestoreLoaded(false),
     canRenameDevices(false),
     m_connected(false),
     m_config_filename(NULL) {
@@ -941,6 +942,7 @@ void MainWindow::updateSinkInput(const pa_sink_input_info &info) {
 
     if ((t = pa_proplist_gets(info.proplist, "module-stream-restore.id"))) {
         if (strcmp(t, "sink-input-by-media-role:event") == 0) {
+            bool is_new_event = (eventRoleSinkInputIndex == PA_INVALID_INDEX);
             eventRoleSinkInputIndex = info.index;
             eventRoleSinkInputChannels = info.channel_map.channels;
             if (eventRoleWidget) {
@@ -951,6 +953,24 @@ void MainWindow::updateSinkInput(const pa_sink_input_info &info) {
                 eventRoleWidget->setVolume(vol);
                 eventRoleWidget->muteToggleButton->set_active(info.mute);
                 eventRoleWidget->updating = false;
+            }
+            /* When a new event stream appears, WirePlumber may have applied
+             * its own cached volume (which can differ from what PA
+             * ext-stream-restore and the user-facing widget say).  Override
+             * it immediately so WirePlumber sees and saves the correct value
+             * when the stream disconnects. */
+            if (is_new_event && eventRoleRestoreLoaded) {
+                pa_volume_t stored = pa_cvolume_max(&eventRoleRestoreVolume);
+                pa_volume_t live   = pa_cvolume_max(&info.volume);
+                if (stored != live) {
+                    pa_cvolume v;
+                    pa_cvolume_set(&v, info.channel_map.channels, stored);
+                    pa_operation *o;
+                    if ((o = pa_context_set_sink_input_volume(get_context(), info.index, &v, NULL, NULL)))
+                        pa_operation_unref(o);
+                    if ((o = pa_context_set_sink_input_mute(get_context(), info.index, eventRoleRestoreMute, NULL, NULL)))
+                        pa_operation_unref(o);
+                }
             }
             return;
         }
@@ -1216,6 +1236,7 @@ void MainWindow::updateRole(const pa_ext_stream_restore_info &info) {
     /* Always cache so removeSinkInput() can revert to this when stream ends. */
     eventRoleRestoreVolume = info.volume;
     eventRoleRestoreMute = info.mute;
+    eventRoleRestoreLoaded = true;
 
     /* Only apply stream-restore volume when no live event stream is active.
      * If a live stream is playing, its volume is the source of truth and
