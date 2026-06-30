@@ -70,6 +70,8 @@ void RoleWidget::executeVolumeUpdate() {
     }
     pa_operation_unref(o);
 
+    writeWirePlumberStateEntry();
+
     uint32_t idx = mpMainWindow->eventRoleSinkInputIndex;
     if (idx != PA_INVALID_INDEX) {
         pa_cvolume v;

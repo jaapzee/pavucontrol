@@ -1,3 +1,6 @@
+option('pkgrel',
+       type : 'string', value : '',
+       description : 'Package release suffix appended to the version label (e.g. "1.12")')
 option('lynx',
        type : 'feature', value : 'auto',
        description : 'Enable building of the README text file for installation')

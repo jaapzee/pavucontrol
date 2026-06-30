@@ -184,8 +184,11 @@ MainWindow::MainWindow(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>
     btAutoswitchSwitch = x->get_widget<Gtk::Switch>("btAutoswitchSwitch");
     recentlyActiveSpinButton = x->get_widget<Gtk::SpinButton>("recentlyActiveSpinButton");
 
-    if (auto *versionLabel = x->get_widget<Gtk::Label>("versionLabel"))
-        versionLabel->set_markup(Glib::ustring("<small>pavucontrol ") + PACKAGE_VERSION + "</small>");
+    if (auto *versionLabel = x->get_widget<Gtk::Label>("versionLabel")) {
+        Glib::ustring ver = PACKAGE_VERSION;
+        if (*PACKAGE_PKGREL) ver += Glib::ustring("-") + PACKAGE_PKGREL;
+        versionLabel->set_markup("<small>pavucontrol " + ver + "</small>");
+    }
 
     sinkInputTypeComboBox->set_active((int) showSinkInputType);
     sourceOutputTypeComboBox->set_active((int) showSourceOutputType);
@@ -1167,6 +1170,7 @@ bool MainWindow::createEventRoleWidget() {
     eventRoleWidget->unreference();
     eventRoleWidget->init(this);
     eventRoleWidget->role = "sink-input-by-media-role:event";
+    eventRoleWidget->wpRestoreKey = "Output/Audio:media.role:Notification";
     eventRoleWidget->setChannelMap(cm, true);
 
     eventRoleWidget->boldNameLabel->set_text("");

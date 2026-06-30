@@ -5,7 +5,7 @@
 # fetching a release tarball. Run `makepkg -si` from this directory.
 pkgname=pavucontrol
 pkgver=6.2
-pkgrel=1.12
+pkgrel=1.13
 epoch=1
 pkgdesc="PulseAudio Volume Control (local build)"
 arch=('x86_64')
@@ -21,7 +21,8 @@ _projectdir="$startdir/.."
 build() {
     arch-meson "$_projectdir" build \
         -D audio-feedback=enabled \
-        -D lynx=disabled
+        -D lynx=disabled \
+        -D pkgrel=$pkgrel
     meson compile -C build
 }
 

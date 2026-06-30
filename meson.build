@@ -35,6 +35,7 @@ cdata.set_quoted('PACKAGE', 'pavucontrol')
 cdata.set_quoted('PACKAGE_NAME', 'pavucontrol')
 cdata.set_quoted('PACKAGE_STRING', 'pavucontrol')
 cdata.set_quoted('PACKAGE_VERSION', meson.project_version())
+cdata.set_quoted('PACKAGE_PKGREL', get_option('pkgrel'))
 cdata.set_quoted('GETTEXT_PACKAGE', 'pavucontrol')
 cdata.set_quoted('LOCALEDIR', localedir)
 
