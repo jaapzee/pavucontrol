@@ -945,32 +945,37 @@ void MainWindow::updateSinkInput(const pa_sink_input_info &info) {
             bool is_new_event = (eventRoleSinkInputIndex == PA_INVALID_INDEX);
             eventRoleSinkInputIndex = info.index;
             eventRoleSinkInputChannels = info.channel_map.channels;
-            if (eventRoleWidget) {
+
+            pa_volume_t live   = pa_cvolume_max(&info.volume);
+            pa_volume_t stored = eventRoleRestoreLoaded
+                                 ? pa_cvolume_max(&eventRoleRestoreVolume)
+                                 : live;
+            bool will_override = is_new_event && eventRoleRestoreLoaded &&
+                                 (stored != live || info.mute != eventRoleRestoreMute);
+
+            /* Only update the widget from the live stream if we are NOT about
+             * to override it.  When WirePlumber has applied a stale cached
+             * volume to a freshly-started event stream we will immediately
+             * push the correct stored value; updating the widget first would
+             * cause a one-frame flicker to the wrong level. */
+            if (eventRoleWidget && !will_override) {
                 eventRoleWidget->updating = true;
                 pa_cvolume vol;
                 vol.channels = 1;
-                vol.values[0] = pa_cvolume_max(&info.volume);
+                vol.values[0] = live;
                 eventRoleWidget->setVolume(vol);
                 eventRoleWidget->muteToggleButton->set_active(info.mute);
                 eventRoleWidget->updating = false;
             }
-            /* When a new event stream appears, WirePlumber may have applied
-             * its own cached volume (which can differ from what PA
-             * ext-stream-restore and the user-facing widget say).  Override
-             * it immediately so WirePlumber sees and saves the correct value
-             * when the stream disconnects. */
-            if (is_new_event && eventRoleRestoreLoaded) {
-                pa_volume_t stored = pa_cvolume_max(&eventRoleRestoreVolume);
-                pa_volume_t live   = pa_cvolume_max(&info.volume);
-                if (stored != live) {
-                    pa_cvolume v;
-                    pa_cvolume_set(&v, info.channel_map.channels, stored);
-                    pa_operation *o;
-                    if ((o = pa_context_set_sink_input_volume(get_context(), info.index, &v, NULL, NULL)))
-                        pa_operation_unref(o);
-                    if ((o = pa_context_set_sink_input_mute(get_context(), info.index, eventRoleRestoreMute, NULL, NULL)))
-                        pa_operation_unref(o);
-                }
+
+            if (will_override) {
+                pa_cvolume v;
+                pa_cvolume_set(&v, info.channel_map.channels, stored);
+                pa_operation *o;
+                if ((o = pa_context_set_sink_input_volume(get_context(), info.index, &v, NULL, NULL)))
+                    pa_operation_unref(o);
+                if ((o = pa_context_set_sink_input_mute(get_context(), info.index, eventRoleRestoreMute, NULL, NULL)))
+                    pa_operation_unref(o);
             }
             return;
         }
