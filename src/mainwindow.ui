@@ -520,6 +520,14 @@
                                         </child>
                                       </object>
                                     </child>
+                                    <child>
+                                      <object class="GtkLabel" id="versionLabel">
+                                        <property name="halign">end</property>
+                                        <property name="margin-top">4</property>
+                                        <property name="margin-end">2</property>
+                                        <property name="sensitive">0</property>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
                               </object>

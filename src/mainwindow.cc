@@ -184,6 +184,9 @@ MainWindow::MainWindow(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>
     btAutoswitchSwitch = x->get_widget<Gtk::Switch>("btAutoswitchSwitch");
     recentlyActiveSpinButton = x->get_widget<Gtk::SpinButton>("recentlyActiveSpinButton");
 
+    if (auto *versionLabel = x->get_widget<Gtk::Label>("versionLabel"))
+        versionLabel->set_markup(Glib::ustring("<small>pavucontrol ") + PACKAGE_VERSION + "</small>");
+
     sinkInputTypeComboBox->set_active((int) showSinkInputType);
     sourceOutputTypeComboBox->set_active((int) showSourceOutputType);
     sinkTypeComboBox->set_active((int) showSinkType);
