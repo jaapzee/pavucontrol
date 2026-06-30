@@ -25,8 +25,36 @@
 #include "rolewidget.h"
 
 #include <pulse/ext-stream-restore.h>
+#include <pulse/volume.h>
+#include <glib.h>
 
 #include "i18n.h"
+
+#if HAVE_PULSE_MESSAGING_API
+static void writeWirePlumberMetadata(pa_volume_t pa_vol, bool muted) {
+    double cubic = pa_sw_volume_to_linear(pa_vol);
+    gchar *json = g_strdup_printf(
+        "{\"mute\":%s,\"volumes\":[%.6f],\"channels\":[\"MONO\"]}",
+        muted ? "true" : "false",
+        cubic
+    );
+    gchar *argv[] = {
+        (gchar *)"pw-metadata",
+        (gchar *)"-n", (gchar *)"route-settings",
+        (gchar *)"0",
+        (gchar *)"restore.stream.Output/Audio.media.role:Notification",
+        json,
+        (gchar *)"Spa:String:JSON",
+        NULL
+    };
+    g_spawn_async(NULL, argv, NULL,
+                  (GSpawnFlags)(G_SPAWN_SEARCH_PATH |
+                                G_SPAWN_STDOUT_TO_DEV_NULL |
+                                G_SPAWN_STDERR_TO_DEV_NULL),
+                  NULL, NULL, NULL, NULL);
+    g_free(json);
+}
+#endif
 
 RoleWidget::RoleWidget(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>& x) :
     StreamWidget(cobject, x) {
@@ -71,6 +99,10 @@ void RoleWidget::executeVolumeUpdate() {
     pa_operation_unref(o);
 
     writeWirePlumberStateEntry();
+
+#if HAVE_PULSE_MESSAGING_API
+    writeWirePlumberMetadata(volume.values[0], info.mute);
+#endif
 
     uint32_t idx = mpMainWindow->eventRoleSinkInputIndex;
     if (idx != PA_INVALID_INDEX) {
