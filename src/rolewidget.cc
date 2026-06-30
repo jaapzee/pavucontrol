@@ -33,10 +33,12 @@
 #if HAVE_PULSE_MESSAGING_API
 static void writeWirePlumberMetadata(pa_volume_t pa_vol, bool muted) {
     double cubic = pa_sw_volume_to_linear(pa_vol);
+    gchar vol_str[G_ASCII_DTOSTR_BUF_SIZE];
+    g_ascii_formatd(vol_str, sizeof(vol_str), "%.6f", cubic);
     gchar *json = g_strdup_printf(
-        "{\"mute\":%s,\"volumes\":[%.6f],\"channels\":[\"MONO\"]}",
+        "{\"mute\":%s,\"volumes\":[%s],\"channels\":[\"MONO\"]}",
         muted ? "true" : "false",
-        cubic
+        vol_str
     );
     gchar *argv[] = {
         (gchar *)"pw-metadata",
