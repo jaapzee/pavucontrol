@@ -141,6 +141,8 @@ class MainWindow : public Gtk::Window {
     RoleWidget *eventRoleWidget;
     uint32_t eventRoleSinkInputIndex;
     uint8_t eventRoleSinkInputChannels;
+    pa_cvolume eventRoleRestoreVolume;
+    bool eventRoleRestoreMute;
 
     bool createEventRoleWidget();
     void deleteEventRoleWidget();

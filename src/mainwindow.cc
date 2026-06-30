@@ -151,6 +151,8 @@ MainWindow::MainWindow(BaseObjectType* cobject, const Glib::RefPtr<Gtk::Builder>
     eventRoleWidget(NULL),
     eventRoleSinkInputIndex(PA_INVALID_INDEX),
     eventRoleSinkInputChannels(1),
+    eventRoleRestoreVolume{1, {PA_VOLUME_NORM}},
+    eventRoleRestoreMute(false),
     canRenameDevices(false),
     m_connected(false),
     m_config_filename(NULL) {
@@ -1204,6 +1206,10 @@ void MainWindow::updateRole(const pa_ext_stream_restore_info &info) {
 
     eventRoleWidget->device = info.device ? info.device : "";
 
+    /* Always cache so removeSinkInput() can revert to this when stream ends. */
+    eventRoleRestoreVolume = info.volume;
+    eventRoleRestoreMute = info.mute;
+
     /* Only apply stream-restore volume when no live event stream is active.
      * If a live stream is playing, its volume is the source of truth and
      * updateSinkInput() already keeps the widget in sync; letting the stream-
@@ -1512,6 +1518,15 @@ void MainWindow::removeSource(uint32_t index) {
 void MainWindow::removeSinkInput(uint32_t index) {
     if (index == eventRoleSinkInputIndex) {
         eventRoleSinkInputIndex = PA_INVALID_INDEX;
+        if (eventRoleWidget) {
+            pa_cvolume vol;
+            vol.channels = 1;
+            vol.values[0] = pa_cvolume_max(&eventRoleRestoreVolume);
+            eventRoleWidget->updating = true;
+            eventRoleWidget->setVolume(vol);
+            eventRoleWidget->muteToggleButton->set_active(eventRoleRestoreMute);
+            eventRoleWidget->updating = false;
+        }
         return;
     }
 
